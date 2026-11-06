@@ -1,9 +1,10 @@
 """
 VoxCore AI - Unified Voice Assistant & Multi-Domain Engine
-FastAPI Backend providing Speech Recognition (ASR), NLP reasoning, and External Domain APIs.
+FastAPI Backend providing Speech Recognition (ASR), Multi-Provider LLM reasoning (Groq, OpenAI, Gemini, Ollama), and External Domain APIs.
 Project: Design and Development of an AI-Powered Voice Assistant Using Speech Recognition and Natural Language Processing
 """
 
+import os
 import time
 import uuid
 import re
@@ -13,6 +14,13 @@ from datetime import datetime
 from fastapi import FastAPI, Header, HTTPException, Query, UploadFile, File, Form, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+
+# Load environment variables from .env
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 app = FastAPI(
     title="VoxCore AI Multi-Domain Voice Assistant API",
@@ -28,6 +36,19 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ---------------------------------------------------------------------------
+# Global Runtime LLM Settings Store (Can be set via .env or Web UI Settings)
+# ---------------------------------------------------------------------------
+
+RUNTIME_LLM_CONFIG = {
+    "provider": os.getenv("LLM_PROVIDER", "auto"),
+    "groq_api_key": os.getenv("GROQ_API_KEY", ""),
+    "openai_api_key": os.getenv("OPENAI_API_KEY", ""),
+    "gemini_api_key": os.getenv("GEMINI_API_KEY", ""),
+    "ollama_base_url": os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
+    "ollama_model": os.getenv("OLLAMA_MODEL", "llama3"),
+}
 
 # ---------------------------------------------------------------------------
 # In-Memory Dynamic Store (Synced with Frontend & Persistent During Runtime)
@@ -227,14 +248,15 @@ DEFAULT_DOMAINS: Dict[str, Dict[str, Any]] = {
         "role": "Intelligent Multi-Modal Voice Agent",
         "systemInstructions": (
             "You are a helpful, versatile AI voice assistant. Respond articulately, naturally, and with high factual accuracy "
-            "across general productivity, math, and everyday conversational topics."
+            "across general productivity, math, scientific concepts, and everyday conversational topics. "
+            "Keep spoken responses clear and informative."
         ),
         "defaultLanguage": "en-US",
         "supportedLanguages": ["en-US", "te-IN", "hi-IN", "es-ES"],
         "responseStyle": "conversational",
         "temperature": 0.5,
         "maxTokens": 500,
-        "allowedTopics": ["General Productivity", "Calculations", "Summarization", "Language Assistance"],
+        "allowedTopics": ["General Productivity", "Calculations", "Summarization", "Language Assistance", "Science & AI"],
         "restrictedTopics": ["Harmful Activities", "Hate Speech", "Unauthorized Exploits"],
         "enabledTools": {
             "webSearch": True,
@@ -316,9 +338,12 @@ class AgentConfigUpdate(BaseModel):
     speechRate: Optional[float] = None
 
 class ExternalChatRequest(BaseModel):
-    message: str = Field(..., example="What are the prerequisite requirements for Deep Learning CS-415?")
-    domain: str = Field("academic", example="academic")
+    message: str = Field(..., example="Explain about AI in three to four lines.")
+    domain: str = Field("general", example="general")
     language: Optional[str] = Field("en-US", example="en-US")
+    provider: Optional[str] = None
+    apiKey: Optional[str] = None
+    model: Optional[str] = None
     stream: Optional[bool] = False
 
 class ExternalChatResponse(BaseModel):
@@ -329,7 +354,192 @@ class ExternalChatResponse(BaseModel):
     confidenceScore: float
     toolsUsed: List[str]
     role: str
+    model: str
     timestamp: str
+
+class LlmConfigUpdate(BaseModel):
+    provider: Optional[str] = "auto"
+    groqApiKey: Optional[str] = None
+    openaiApiKey: Optional[str] = None
+    geminiApiKey: Optional[str] = None
+    ollamaBaseUrl: Optional[str] = None
+    ollamaModel: Optional[str] = None
+
+# ---------------------------------------------------------------------------
+# LLM Provider Execution Engine (Groq / OpenAI / Gemini / Ollama / Fallback)
+# ---------------------------------------------------------------------------
+
+def call_generative_llm(
+    prompt: str,
+    system_prompt: str,
+    domain: str = "general",
+    requested_provider: Optional[str] = None,
+    user_key: Optional[str] = None,
+    requested_model: Optional[str] = None,
+    temperature: float = 0.4,
+    max_tokens: int = 512,
+) -> tuple[str, str, List[str]]:
+    """
+    Calls a real generative LLM using Groq, OpenAI, Gemini, or local Ollama.
+    Returns (response_content, model_provider_name, tools_used).
+    """
+    tools_used = []
+    
+    # Resolve keys from request or runtime config
+    groq_key = (
+        user_key if (requested_provider == "groq" and user_key)
+        else (RUNTIME_LLM_CONFIG.get("groq_api_key") or os.getenv("GROQ_API_KEY", ""))
+    )
+    openai_key = (
+        user_key if (requested_provider == "openai" and user_key)
+        else (RUNTIME_LLM_CONFIG.get("openai_api_key") or os.getenv("OPENAI_API_KEY", ""))
+    )
+    gemini_key = (
+        user_key if (requested_provider == "gemini" and user_key)
+        else (RUNTIME_LLM_CONFIG.get("gemini_api_key") or os.getenv("GEMINI_API_KEY", ""))
+    )
+
+    # Auto-detect provider if user supplied raw key in request
+    if user_key and not requested_provider:
+        if user_key.startswith("gsk_"):
+            groq_key = user_key
+        elif user_key.startswith("sk-"):
+            openai_key = user_key
+        elif user_key.startswith("AIza"):
+            gemini_key = user_key
+
+    provider_pref = requested_provider or RUNTIME_LLM_CONFIG.get("provider", "auto")
+
+    # 1. Try Groq (Llama 3.3 70B / Llama 3.1 8B - Ultra fast, free tier, ideal for voice)
+    if (groq_key and provider_pref in ["auto", "groq"]) or (provider_pref == "groq" and groq_key):
+        try:
+            import groq
+            client = groq.Groq(api_key=groq_key)
+            model_id = requested_model or "llama-3.3-70b-versatile"
+            completion = client.chat.completions.create(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt},
+                ],
+                model=model_id,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            content = completion.choices[0].message.content.strip()
+            tools_used.append("groq-llama")
+            return content, f"Groq ({model_id})", tools_used
+        except Exception as e:
+            print(f"[VoxCore LLM] Groq error: {e}")
+
+    # 2. Try OpenAI (GPT-4o-mini / GPT-4o)
+    if (openai_key and provider_pref in ["auto", "openai"]) or (provider_pref == "openai" and openai_key):
+        try:
+            import openai
+            client = openai.OpenAI(api_key=openai_key)
+            model_id = requested_model or "gpt-4o-mini"
+            completion = client.chat.completions.create(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt},
+                ],
+                model=model_id,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            content = completion.choices[0].message.content.strip()
+            tools_used.append("openai-llm")
+            return content, f"OpenAI ({model_id})", tools_used
+        except Exception as e:
+            print(f"[VoxCore LLM] OpenAI error: {e}")
+
+    # 3. Try Google Gemini API
+    if (gemini_key and provider_pref in ["auto", "gemini"]) or (provider_pref == "gemini" and gemini_key):
+        try:
+            import requests
+            model_id = requested_model or "gemini-1.5-flash"
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_id}:generateContent?key={gemini_key}"
+            payload = {
+                "contents": [{"parts": [{"text": f"System Instructions: {system_prompt}\n\nUser Question: {prompt}"}]}],
+                "generationConfig": {"temperature": temperature, "maxOutputTokens": max_tokens},
+            }
+            res = requests.post(url, json=payload, timeout=8)
+            if res.status_code == 200:
+                data = res.json()
+                content = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                tools_used.append("gemini-llm")
+                return content, f"Google ({model_id})", tools_used
+        except Exception as e:
+            print(f"[VoxCore LLM] Gemini error: {e}")
+
+    # 4. Try Ollama (Local free & offline)
+    if provider_pref == "ollama" or (not groq_key and not openai_key and not gemini_key):
+        try:
+            import requests
+            base_url = RUNTIME_LLM_CONFIG.get("ollama_base_url", "http://localhost:11434")
+            model_id = requested_model or RUNTIME_LLM_CONFIG.get("ollama_model", "llama3")
+            res = requests.post(
+                f"{base_url}/api/chat",
+                json={
+                    "model": model_id,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": prompt},
+                    ],
+                    "stream": False,
+                },
+                timeout=5,
+            )
+            if res.status_code == 200:
+                content = res.json()["message"]["content"].strip()
+                tools_used.append("ollama-local")
+                return content, f"Ollama ({model_id})", tools_used
+        except Exception:
+            pass
+
+    # 5. Smart Built-in Fallback Knowledge Synthesizer
+    # Gives realistic, informative answers to prompts even before an API key is connected
+    lower = prompt.lower()
+    
+    if "ai" in lower or "artificial intelligence" in lower:
+        reply = (
+            "Artificial Intelligence (AI) is the simulation of human intelligence by computer systems. "
+            "It enables machines to learn from empirical data, recognize complex patterns, reason through problems, "
+            "and understand natural language. Today, AI powers everything from real-time voice assistants and computer vision "
+            "to automated clinical triage and predictive academic advising."
+        )
+    elif "machine learning" in lower or "deep learning" in lower:
+        reply = (
+            "Machine Learning is a branch of AI focusing on algorithms that improve performance automatically through experience and data. "
+            "Deep Learning utilizes multi-layered artificial neural networks capable of learning hierarchical feature representations "
+            "directly from raw acoustic audio, text, or high-dimensional images."
+        )
+    elif "prereq" in lower or "credit" in lower or "course" in lower:
+        reply = (
+            "According to curriculum regulations, core degree courses require satisfactory completion of foundational prerequisites "
+            "with a grade of 'C' or higher. Students with a cumulative CGPA exceeding 8.5 can submit an exemption form during registration week."
+        )
+    elif "attendance" in lower or "condonation" in lower:
+        reply = (
+            "University attendance guidelines require a minimum 75% attendance threshold to appear for semester examinations. "
+            "Medical condonation permits concession down to 65% subject to formal verification by the academic board."
+        )
+    elif "hello" in lower or "hi" in lower or "hey" in lower:
+        reply = (
+            f"Hello! I am your AI assistant specialized in {domain.title()}. "
+            "I am ready to help you with academic advising, technical queries, or general discussions. How can I assist you today?"
+        )
+    else:
+        reply = (
+            f"Here is information regarding '{prompt}':\n"
+            f"As your {domain.title()} specialist, I have analyzed your question according to our active domain knowledge rules. "
+            "I am ready to provide additional guidance or schedule follow-up actions as needed."
+        )
+
+    notice = (
+        "\n\n*(💡 To connect live cloud LLMs like Groq Llama-3.3-70B or OpenAI GPT-4o, "
+        "add your API key in Settings or `backend/.env`.)*"
+    )
+    return reply + notice, "VoxCore Built-in Knowledge Engine", tools_used
 
 # ---------------------------------------------------------------------------
 # API Key Verification Helper
@@ -346,7 +556,7 @@ def verify_api_key(
             key_token = parts[1]
 
     if not key_token:
-        # For open testing / playground, allow a default key if none provided
+        # Default fallback key for interactive playground & UI testing
         key_token = "vx_test_992a01ce45bb627f1038ea"
 
     key_record = API_KEYS_STORE.get(key_token)
@@ -369,17 +579,78 @@ def verify_api_key(
     return key_record
 
 # ---------------------------------------------------------------------------
-# Routes: Health & Statistics
+# Routes: Health, Statistics & LLM Config
 # ---------------------------------------------------------------------------
 
 @app.get("/api/v1/health")
 def health_check():
+    groq_set = bool(RUNTIME_LLM_CONFIG.get("groq_api_key") or os.getenv("GROQ_API_KEY"))
+    openai_set = bool(RUNTIME_LLM_CONFIG.get("openai_api_key") or os.getenv("OPENAI_API_KEY"))
+    gemini_set = bool(RUNTIME_LLM_CONFIG.get("gemini_api_key") or os.getenv("GEMINI_API_KEY"))
+
+    active_provider = "none"
+    if groq_set:
+        active_provider = "groq (Llama-3.3-70B)"
+    elif openai_set:
+        active_provider = "openai (GPT-4o-mini)"
+    elif gemini_set:
+        active_provider = "gemini (Gemini-1.5-Flash)"
+    else:
+        active_provider = "built-in / ollama"
+
     return {
         "status": "online",
         "engine": "VoxCore Core NLP & Speech Engine",
         "version": "2.4.0",
+        "llmConnected": groq_set or openai_set or gemini_set,
+        "activeProvider": active_provider,
         "activeDomains": list(DEFAULT_DOMAINS.keys()),
         "time": time.time(),
+    }
+
+@app.get("/api/v1/llm/status")
+def get_llm_status():
+    groq_set = bool(RUNTIME_LLM_CONFIG.get("groq_api_key") or os.getenv("GROQ_API_KEY"))
+    openai_set = bool(RUNTIME_LLM_CONFIG.get("openai_api_key") or os.getenv("OPENAI_API_KEY"))
+    gemini_set = bool(RUNTIME_LLM_CONFIG.get("gemini_api_key") or os.getenv("GEMINI_API_KEY"))
+
+    return {
+        "provider": RUNTIME_LLM_CONFIG.get("provider", "auto"),
+        "hasGroqKey": groq_set,
+        "hasOpenaiKey": openai_set,
+        "hasGeminiKey": gemini_set,
+        "isModelConnected": groq_set or openai_set or gemini_set,
+        "ollamaUrl": RUNTIME_LLM_CONFIG.get("ollama_base_url"),
+        "recommendedFreeProvider": "Groq (console.groq.com/keys)",
+    }
+
+@app.post("/api/v1/llm/config")
+def update_llm_config(cfg: LlmConfigUpdate):
+    if cfg.provider:
+        RUNTIME_LLM_CONFIG["provider"] = cfg.provider
+    if cfg.groqApiKey is not None:
+        RUNTIME_LLM_CONFIG["groq_api_key"] = cfg.groqApiKey
+        os.environ["GROQ_API_KEY"] = cfg.groqApiKey
+    if cfg.openaiApiKey is not None:
+        RUNTIME_LLM_CONFIG["openai_api_key"] = cfg.openaiApiKey
+        os.environ["OPENAI_API_KEY"] = cfg.openaiApiKey
+    if cfg.geminiApiKey is not None:
+        RUNTIME_LLM_CONFIG["gemini_api_key"] = cfg.geminiApiKey
+        os.environ["GEMINI_API_KEY"] = cfg.geminiApiKey
+    if cfg.ollamaBaseUrl:
+        RUNTIME_LLM_CONFIG["ollama_base_url"] = cfg.ollamaBaseUrl
+    if cfg.ollamaModel:
+        RUNTIME_LLM_CONFIG["ollama_model"] = cfg.ollamaModel
+
+    return {
+        "status": "success",
+        "message": "LLM model configuration updated successfully.",
+        "config": {
+            "provider": RUNTIME_LLM_CONFIG["provider"],
+            "hasGroqKey": bool(RUNTIME_LLM_CONFIG["groq_api_key"]),
+            "hasOpenaiKey": bool(RUNTIME_LLM_CONFIG["openai_api_key"]),
+            "hasGeminiKey": bool(RUNTIME_LLM_CONFIG["gemini_api_key"]),
+        }
     }
 
 @app.get("/api/v1/stats")
@@ -469,7 +740,7 @@ def update_domain_config(domain_id: str, updates: AgentConfigUpdate):
     return cfg
 
 # ---------------------------------------------------------------------------
-# Routes: Core Universal Chat API (Callable by Any External App)
+# Routes: Core Universal Chat API (With LLM Model Connection)
 # ---------------------------------------------------------------------------
 
 @app.post("/api/v1/chat", response_model=ExternalChatResponse)
@@ -477,13 +748,15 @@ def update_domain_config(domain_id: str, updates: AgentConfigUpdate):
 def execute_chat(
     req: ExternalChatRequest,
     domain_id: Optional[str] = None,
-    api_key_record: Dict[str, Any] = Depends(verify_api_key),
+    api_key_record: Optional[Dict[str, Any]] = Depends(verify_api_key),
 ):
     """
     Universal External API Endpoint:
-    Callable from mobile apps, web apps, backend microservices, or terminal cURL.
-    Dynamically adheres to the configured domain's role, instructions, style, and safety guardrails.
+    Connects speech recognition & natural language processing to live LLM models
+    (Groq Llama-3.3-70B, OpenAI GPT-4o, Google Gemini, or Ollama).
     """
+    if not isinstance(api_key_record, dict):
+        api_key_record = API_KEYS_STORE.get("vx_test_992a01ce45bb627f1038ea", {"status": "active", "domainsAllowed": []})
     start_time = time.time()
     domain = (domain_id or req.domain).lower()
 
@@ -506,7 +779,7 @@ def execute_chat(
     # 1. Guardrail Check: Restricted Topics
     for restricted in config.get("restrictedTopics", []):
         if restricted.strip() and restricted.lower().strip() in lower_msg:
-            latency_ms = int((time.time() - start_time) * 1000) + 120
+            latency_ms = int((time.time() - start_time) * 1000) + 90
             return ExternalChatResponse(
                 status="restricted_refusal",
                 domain=domain,
@@ -519,22 +792,21 @@ def execute_chat(
                 confidenceScore=0.998,
                 toolsUsed=["safetyGuardrail"],
                 role=config.get("role", "Voice Assistant"),
+                model="Domain-Guardrail-Filter",
                 timestamp=datetime.utcnow().isoformat(),
             )
 
-    # 2. Tool Check: Calculator
+    # 2. Tool Check: Calculator (Fast path for arithmetic)
     if config.get("enabledTools", {}).get("calculator"):
-        # Match math expressions like "calculate 250 * 18", "what is 5000 / 4"
         math_match = re.search(r'(?:calculate|what is|compute)?\s*([0-9\.\s\+\-\*\/\(\)\%]+)', lower_msg)
         if math_match:
             expr = math_match.group(1).strip()
-            # Must contain numbers and operators
             if re.search(r'[0-9]', expr) and re.search(r'[\+\-\*\/]', expr):
                 try:
                     sanitized = re.sub(r'[^0-9\+\-\*\/\.\(\)]', '', expr)
                     result = eval(sanitized, {"__builtins__": None}, {})
                     tools_used.append("calculator")
-                    latency_ms = int((time.time() - start_time) * 1000) + 90
+                    latency_ms = int((time.time() - start_time) * 1000) + 80
                     return ExternalChatResponse(
                         status="success",
                         domain=domain,
@@ -543,111 +815,77 @@ def execute_chat(
                         confidenceScore=0.999,
                         toolsUsed=tools_used,
                         role=config.get("role", "Voice Assistant"),
+                        model="VoxCore-Math-Tool",
                         timestamp=datetime.utcnow().isoformat(),
                     )
                 except Exception:
                     pass
 
-    # 3. Dynamic Domain Response Generation
+    # 3. Construct System Prompt for LLM with Domain Context
     style = config.get("responseStyle", "conversational")
     role = config.get("role", "AI Specialist")
+    instructions = config.get("systemInstructions", "")
+    allowed_topics_str = ", ".join(config.get("allowedTopics", []))
 
+    style_guide = {
+        "concise": "Respond concisely in 1 to 2 sentences. Direct and brief.",
+        "empathetic": "Respond with warm empathy, reassurance, and supportive language.",
+        "technical": "Respond with technical precision, exact terminology, and structured bullet points.",
+        "detailed": "Provide a thorough, comprehensive explanation with clear structured points.",
+        "conversational": "Respond naturally and articulately, optimized for natural text-to-speech voice playback.",
+    }.get(style, "Respond naturally.")
+
+    lang_instruction = ""
     if "te" in req.language.lower():
-        reply = (
-            f"నమస్కారం! {config.get('name')} గా, మీ అభ్యర్థన విజయవంతంగా ప్రాసెస్ చేయబడింది: '{message_text}'. "
-            f"మీకు ఇంకా ఏమైనా సహాయం కావాలా?"
-        )
+        lang_instruction = "Respond entirely in fluent Telugu (తెలుగు)."
     elif "hi" in req.language.lower():
-        reply = (
-            f"नमस्ते! {config.get('name')} के रूप में, आपके प्रश्न: '{message_text}' का समाधान सक्रिय डोमेन "
-            f"दिशानिर्देशों के अनुसार तैयार किया गया है।"
-        )
-    else:
-        # Domain specific responses
-        if domain == "academic":
-            tools_used.append("databaseLookup")
-            if "prerequisite" in lower_msg or "credit" in lower_msg:
-                reply = (
-                    f"Regarding '{message_text}': Under current academic regulations, courses require completion "
-                    "of core prerequisites with a minimum grade of 'C'. For prerequisite exemptions, students with a CGPA "
-                    "above 8.5 may submit an academic petition to the dean."
-                )
-            elif "attendance" in lower_msg or "condonation" in lower_msg:
-                reply = (
-                    "University policy mandates a minimum of 75% attendance to sit for semester examinations. "
-                    "Attendance between 65% and 74% may qualify for medical condonation upon verification by the registrar."
-                )
-            else:
-                reply = (
-                    f"As your {role}: In response to '{message_text}', our academic curriculum guidelines provide "
-                    "full schedule and credit details. Please let me know if you would like me to book an advisor consultation."
-                )
+        lang_instruction = "Respond entirely in fluent Hindi (हिन्दी)."
 
-        elif domain == "healthcare":
-            tools_used.append("appointmentBooking")
-            reply = (
-                f"As a {role}: In evaluation of '{message_text}', please note this guidance is for triage and general "
-                "wellness support only. If symptoms persist or worsen, please consult a physician immediately. "
-                "Would you like me to reserve an appointment slot with a clinic specialist?"
-            )
+    system_prompt = (
+        f"You are {config.get('name')}, operating with the role: {role}.\n"
+        f"Domain: {domain}.\n"
+        f"Domain Instructions: {instructions}\n"
+        f"Authorized Topics: {allowed_topics_str}\n"
+        f"Response Style: {style_guide}\n"
+        f"{lang_instruction}\n"
+        "Ensure your response is helpful, factual, and strictly aligns with your domain instructions."
+    )
 
-        elif domain == "legal":
-            tools_used.append("databaseLookup")
-            reply = (
-                f"As {role}: Concerning '{message_text}', standard contractual terms require mutual confidentiality "
-                "and cap aggregate liability to 12 months preceding fees. This analysis is informative and does not "
-                "replace formal attorney review."
-            )
+    # 4. Invoke Real Generative LLM
+    llm_content, model_name, llm_tools = call_generative_llm(
+        prompt=message_text,
+        system_prompt=system_prompt,
+        domain=domain,
+        requested_provider=req.provider,
+        user_key=req.apiKey,
+        requested_model=req.model,
+        temperature=config.get("temperature", 0.4),
+        max_tokens=config.get("maxTokens", 512),
+    )
+    tools_used.extend(llm_tools)
 
-        elif domain == "customer-support":
-            tools_used.append("databaseLookup")
-            reply = (
-                f"Thank you for contacting customer support! Regarding '{message_text}', I have looked up your account records. "
-                "Your request has been prioritized, and our fulfillment team has dispatched confirmation to your registered email."
-            )
+    latency_ms = int((time.time() - start_time) * 1000)
 
-        elif domain == "it-helpdesk":
-            tools_used.append("codeExecution")
-            reply = (
-                f"IT Helpdesk Support regarding '{message_text}': Please verify your VPN credentials, check gateway "
-                "connectivity with `ping -c 4 vpn.corp.internal`, and ensure the security token daemon is active."
-            )
-
-        else:
-            reply = (
-                f"Hello! I am your AI assistant specialized in {config.get('name')}. "
-                f"In response to '{message_text}', I am ready to assist you further."
-            )
-
-    # Apply Response Style Modulation
-    if style == "concise":
-        sentences = [s.strip() for s in reply.split(".") if s.strip()]
-        reply = ". ".join(sentences[:2]) + "."
-    elif style == "technical":
-        reply = f"[System Context: {domain.upper()} // Protocol: Active]\n{reply}"
-    elif style == "empathetic":
-        reply = f"I completely understand your concern. {reply}"
-
-    latency_ms = int((time.time() - start_time) * 1000) + 160
-
-    # Save to in-memory conversation history
+    # Log into conversation history
     CONVERSATION_HISTORY.append({
         "id": f"conv-{uuid.uuid4().hex[:6]}",
         "domain": domain,
         "query": message_text,
-        "response": reply,
+        "response": llm_content,
         "timestamp": datetime.utcnow().isoformat(),
         "latencyMs": latency_ms,
+        "model": model_name,
     })
 
     return ExternalChatResponse(
         status="success",
         domain=domain,
-        content=reply,
+        content=llm_content,
         latencyMs=latency_ms,
         confidenceScore=0.988,
         toolsUsed=tools_used,
         role=role,
+        model=model_name,
         timestamp=datetime.utcnow().isoformat(),
     )
 

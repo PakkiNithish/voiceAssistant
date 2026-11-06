@@ -66,7 +66,9 @@ const DEFAULT_SETTINGS: AppSettings = {
     autoPlayResponse: true,
   },
   llm: {
-    modelName: "VoxCore-Llama-3-70B-Domain",
+    provider: "auto",
+    apiKey: "",
+    modelName: "llama-3.3-70b-versatile",
     temperature: 0.4,
     streamResponses: true,
     maxContextMessages: 10,

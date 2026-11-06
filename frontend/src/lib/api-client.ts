@@ -7,6 +7,9 @@ export interface ChatRequestPayload {
   config: AgentConfig;
   conversationHistory: ChatMessage[];
   isVoice?: boolean;
+  llmProvider?: string;
+  llmApiKey?: string;
+  llmModel?: string;
 }
 
 export interface ChatResponsePayload {
@@ -88,6 +91,9 @@ export class ApiClient {
           message: payload.message,
           domain: payload.domain,
           language: payload.language,
+          provider: payload.llmProvider,
+          apiKey: payload.llmApiKey,
+          model: payload.llmModel,
         }),
         signal: controller.signal,
       });
@@ -217,7 +223,13 @@ export class ApiClient {
     } else if (config.domain === "it-helpdesk") {
       baseResponse = `For IT troubleshooting on "${message}": Verify your network gateway connection, flush DNS cache via terminal, and confirm your dual-factor authenticator is in sync with the identity server.`;
     } else {
-      baseResponse = `I received your request: "${message}". Operating as ${config.name} with role "${config.role}".`;
+      if (lowerQuery.includes("ai") || lowerQuery.includes("artificial intelligence")) {
+        baseResponse = `Artificial Intelligence (AI) is the simulation of human intelligence by machines, enabling them to learn from empirical data, reason through complex tasks, and understand human speech. It powers applications ranging from real-time voice assistants to autonomous systems and clinical decision support.`;
+      } else if (lowerQuery.includes("machine learning") || lowerQuery.includes("deep learning")) {
+        baseResponse = `Machine Learning is a subset of AI focused on algorithms that learn directly from data. Deep Learning expands this using multi-layered neural networks to process speech audio, text, and computer vision signals.`;
+      } else {
+        baseResponse = `Operating as ${config.name} (${config.role}): In response to your inquiry regarding "${message}", our domain reasoning system has processed your request.`;
+      }
     }
 
     // Apply Style Filters

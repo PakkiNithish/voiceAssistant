@@ -118,6 +118,9 @@ export default function AssistantPage() {
         config,
         conversationHistory: currentMessages,
         isVoice: fromVoice,
+        llmProvider: settings.llm.provider,
+        llmApiKey: settings.llm.apiKey,
+        llmModel: settings.llm.modelName,
       });
 
       // Add assistant response to history

@@ -132,6 +132,8 @@ export interface AppSettings {
     autoPlayResponse: boolean;
   };
   llm: {
+    provider: "groq" | "openai" | "gemini" | "ollama" | "auto";
+    apiKey: string;
     modelName: string;
     temperature: number;
     streamResponses: boolean;
