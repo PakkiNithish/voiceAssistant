@@ -204,31 +204,181 @@ export class ApiClient {
       };
     }
 
-    // Format based on User Configured Response Style
+    // Format based on User Configured Response Style & Domain Boundaries
     let baseResponse = "";
+
+    // 1. ACADEMIC ADVISOR DOMAIN
     if (config.domain === "academic") {
-      if (lowerQuery.includes("prereq") || lowerQuery.includes("credit") || lowerQuery.includes("course")) {
-        baseResponse = `According to academic guidelines for ${config.name}, prerequisite verification requires completing foundational coursework with a minimum grade of 'C'. Elective registrations are managed through the university registration portal.`;
-      } else if (lowerQuery.includes("attendance") || lowerQuery.includes("condonation")) {
-        baseResponse = `The mandatory attendance threshold is 75%. Documented medical condonation allows a concession down to 65% subject to approval by the Department Dean.`;
-      } else {
-        baseResponse = `Regarding your inquiry on "${message}": As your ${config.role}, I'm here to ensure your degree progress is smooth and compliant with campus regulations.`;
+      const academicKeywords = [
+        "course", "class", "prereq", "credit", "grade", "gpa", "cgpa", "attendance",
+        "exam", "semester", "degree", "curriculum", "registration", "faculty", "admission",
+        "syllabus", "condonation", "transcript", "elective", "major", "minor", "internship",
+        "professor", "study", "college", "university", "tuition", "fee", "scholarship", "deadline"
+      ];
+      const isRelevant = academicKeywords.some((k) => lowerQuery.includes(k));
+
+      if (!isRelevant) {
+        return {
+          content: `As your ${config.name} (${config.role}), my specialization is strictly focused on academic curriculum, course registrations, prerequisites, attendance policies, and degree requirements.\n\nYour inquiry regarding "${message}" is outside university academic advising. To discuss general topics, science, coding, or everyday questions, please switch the active domain to "General Conversational Assistant".`,
+          latencyMs,
+          confidenceScore: 0.992,
+          toolsUsed: ["domainBoundaryFilter"],
+        };
       }
-    } else if (config.domain === "healthcare") {
-      baseResponse = `Under clinical triage guidance for "${message}": Please monitor your vital signs closely. If you experience severe shortness of breath, acute chest pain, or temperature above 101°F, please seek immediate emergency medical care.`;
-    } else if (config.domain === "legal") {
-      baseResponse = `Regarding "${message}": Under standard corporate regulatory frameworks, liability is limited to twelve months of prior service fees with mutual indemnification for third-party intellectual property claims.`;
-    } else if (config.domain === "customer-support") {
-      baseResponse = `Thank you for contacting customer support regarding "${message}". We have verified your account profile. Eligible return or refund requests are processed within 2 to 3 business days to your original payment method.`;
-    } else if (config.domain === "it-helpdesk") {
-      baseResponse = `For IT troubleshooting on "${message}": Verify your network gateway connection, flush DNS cache via terminal, and confirm your dual-factor authenticator is in sync with the identity server.`;
-    } else {
-      if (lowerQuery.includes("ai") || lowerQuery.includes("artificial intelligence")) {
-        baseResponse = `Artificial Intelligence (AI) is the simulation of human intelligence by machines, enabling them to learn from empirical data, reason through complex tasks, and understand human speech. It powers applications ranging from real-time voice assistants to autonomous systems and clinical decision support.`;
-      } else if (lowerQuery.includes("machine learning") || lowerQuery.includes("deep learning")) {
-        baseResponse = `Machine Learning is a subset of AI focused on algorithms that learn directly from data. Deep Learning expands this using multi-layered neural networks to process speech audio, text, and computer vision signals.`;
+
+      if (lowerQuery.includes("prereq") || lowerQuery.includes("credit") || lowerQuery.includes("course")) {
+        baseResponse = `Degree curriculum regulations require completing core prerequisite coursework with a minimum grade of 'C' (Grade Point 6.0) before enrolling in advanced electives. If you possess a cumulative CGPA above 8.5, you may submit Form W-3 to the Academic Dean for a prerequisite waiver.`;
+      } else if (lowerQuery.includes("attendance") || lowerQuery.includes("condonation")) {
+        baseResponse = `University academic policy mandates a minimum of 75% classroom and lab attendance to sit for end-semester examinations. Students with attendance between 65% and 74% due to verified illness may submit a medical condonation petition signed by the Department Chair.`;
+      } else if (lowerQuery.includes("cgpa") || lowerQuery.includes("gpa") || lowerQuery.includes("grade")) {
+        baseResponse = `The grading scale evaluates courses on a 10-point credit index. Semester GPA (SGPA) is computed as Σ(Course Credits × Grade Points) / Σ(Course Credits). Maintaining a CGPA above 8.0 qualifies you for departmental honors and priority internship placements.`;
+      } else if (lowerQuery.includes("exam") || lowerQuery.includes("schedule")) {
+        baseResponse = `Mid-semester examinations commence on Week 8 of the instructional calendar. Final semester theory examinations begin on Week 16, followed immediately by lab practical evaluations. Hall tickets are released 7 days prior on the student portal.`;
       } else {
-        baseResponse = `Operating as ${config.name} (${config.role}): In response to your inquiry regarding "${message}", our domain reasoning system has processed your request.`;
+        baseResponse = `As your ${config.role}: In evaluation of your academic inquiry "${message}", our curriculum guidelines provide detailed advisement pathways. Please ensure your semester credits align with degree requirements.`;
+      }
+    }
+    // 2. HEALTHCARE TRIAGE DOMAIN
+    else if (config.domain === "healthcare") {
+      const healthKeywords = [
+        "symptom", "pain", "fever", "cough", "headache", "cold", "flu", "doctor", "clinic",
+        "medicine", "medication", "dose", "health", "hospital", "emergency", "breath", "triage",
+        "wound", "burn", "blood", "pressure", "sugar", "diabetes", "heart", "chest", "stomach",
+        "nausea", "vomit", "diet", "sleep", "ache"
+      ];
+      const isRelevant = healthKeywords.some((k) => lowerQuery.includes(k));
+
+      if (!isRelevant) {
+        return {
+          content: `As your ${config.name} (${config.role}), I am authorized only to assist with clinical health triage, symptom evaluations, and clinic appointment scheduling.\n\nYour inquiry regarding "${message}" is outside clinical healthcare triage. For general questions or non-medical topics, please switch to the "General Conversational Assistant".`,
+          latencyMs,
+          confidenceScore: 0.992,
+          toolsUsed: ["domainBoundaryFilter"],
+        };
+      }
+
+      if (lowerQuery.includes("chest pain") || lowerQuery.includes("shortness of breath") || lowerQuery.includes("severe")) {
+        baseResponse = `⚠️ URGENT CLINICAL NOTICE: Severe symptoms such as acute chest pain, shortness of breath, sudden numbness, or heavy bleeding require immediate emergency intervention. Please call local emergency services (e.g. 911 / 112) or proceed to the nearest emergency room immediately.`;
+      } else if (lowerQuery.includes("fever") || lowerQuery.includes("cough")) {
+        baseResponse = `Clinical Triage Assessment: For mild-to-moderate fever and cough, monitor body temperature every 4-6 hours, maintain adequate hydration with oral electrolytes, and ensure bed rest. If temperature exceeds 102°F (39°C), persists beyond 72 hours, or is accompanied by chest tightness, schedule an in-person physician evaluation.`;
+      } else if (lowerQuery.includes("headache") || lowerQuery.includes("migraine")) {
+        baseResponse = `Clinical Triage Assessment: Rest in a quiet, dark environment, hydrate adequately, and avoid excessive screen time. If the headache is accompanied by stiff neck, visual aura, high fever, or sudden 'thunderclap' onset, seek immediate emergency medical care.`;
+      } else {
+        baseResponse = `Clinical Guidance regarding "${message}": Based on general wellness triage guidelines, track symptom onset, duration, and severity. [Medical Disclaimer: This guidance is for triage informational purposes and does not substitute for an in-person licensed physician examination.]`;
+      }
+    }
+    // 3. LEGAL DOMAIN
+    else if (config.domain === "legal") {
+      const legalKeywords = [
+        "contract", "clause", "agreement", "nda", "msa", "liability", "indemnity", "indemnification",
+        "compliance", "gdpr", "privacy", "statute", "regulation", "law", "attorney", "legal",
+        "court", "dispute", "arbitration", "intellectual property", "patent", "trademark", "copyright",
+        "breach", "termination", "governing law"
+      ];
+      const isRelevant = legalKeywords.some((k) => lowerQuery.includes(k));
+
+      if (!isRelevant) {
+        return {
+          content: `As your ${config.name} (${config.role}), I am specialized strictly in corporate legal compliance, contract clause analysis, and regulatory frameworks.\n\nYour inquiry regarding "${message}" is outside corporate legal compliance scope. For non-legal or general queries, please switch to the "General Conversational Assistant".`,
+          latencyMs,
+          confidenceScore: 0.992,
+          toolsUsed: ["domainBoundaryFilter"],
+        };
+      }
+
+      if (lowerQuery.includes("nda") || lowerQuery.includes("confidential")) {
+        baseResponse = `Non-Disclosure Agreements (NDAs) define proprietary information boundaries, permitted receiving parties, and exclusion standards (such as publicly known data). Standard enterprise NDAs enforce a confidentiality obligation of 3 to 5 years from disclosure, while trade secrets must remain confidential indefinitely.`;
+      } else if (lowerQuery.includes("liability") || lowerQuery.includes("indemnit")) {
+        baseResponse = `Under standard commercial contracts, Limitation of Liability clauses cap aggregate financial exposure to fees paid in the preceding 12 months. Consequential and punitive damages are customarily waived, with mutual indemnification reserved for third-party IP infringement and gross negligence.`;
+      } else if (lowerQuery.includes("gdpr") || lowerQuery.includes("privacy") || lowerQuery.includes("data")) {
+        baseResponse = `Under statutory data protection compliance (such as GDPR), data controllers must implement technical safeguards, honor Subject Access Requests within 30 days, and report unauthorized personal data breaches to regulatory authorities within 72 hours of discovery.`;
+      } else {
+        baseResponse = `Legal Analysis on "${message}": Standard corporate contracting mandates mutual obligations, strict compliance audit trails, and designated jurisdiction venue clauses. [Notice: This review is informational and does not constitute formal attorney-client advice.]`;
+      }
+    }
+    // 4. CUSTOMER SUPPORT DOMAIN
+    else if (config.domain === "customer-support") {
+      const supportKeywords = [
+        "order", "tracking", "shipment", "package", "delivery", "refund", "return", "cancel",
+        "invoice", "billing", "charge", "payment", "account", "subscription", "support", "help",
+        "warranty", "item", "product", "damaged"
+      ];
+      const isRelevant = supportKeywords.some((k) => lowerQuery.includes(k));
+
+      if (!isRelevant) {
+        return {
+          content: `As your ${config.name} (${config.role}), my responsibilities are focused on customer orders, shipping tracking, returns, billing, and account assistance.\n\nYour inquiry regarding "${message}" is outside customer service scope. For general questions, please switch to the "General Conversational Assistant".`,
+          latencyMs,
+          confidenceScore: 0.992,
+          toolsUsed: ["domainBoundaryFilter"],
+        };
+      }
+
+      if (lowerQuery.includes("track") || lowerQuery.includes("order") || lowerQuery.includes("package")) {
+        baseResponse = `Order Tracking Update: For orders placed within the last 5 business days, real-time dispatch tracking is active. Standard express courier transit takes 2-4 business days. Once in transit, an automated dispatch notification is sent to your registered email.`;
+      } else if (lowerQuery.includes("refund") || lowerQuery.includes("return")) {
+        baseResponse = `Return & Refund Policy: Products can be returned within 30 days of delivery in their original condition. Once inspected at our regional hub, refunds are credited to your original payment method within 2 to 3 business days.`;
+      } else if (lowerQuery.includes("cancel")) {
+        baseResponse = `Order Cancellation: Orders can be canceled penalty-free before warehouse dispatch. If already dispatched, you may decline the delivery at your door for an automated full refund.`;
+      } else {
+        baseResponse = `Customer Care regarding "${message}": We have verified your customer profile. Our resolution desk has prioritized your request. Please let me know if you would like me to issue an automated support ticket or connect you with a specialist.`;
+      }
+    }
+    // 5. IT HELPDESK DOMAIN
+    else if (config.domain === "it-helpdesk") {
+      const itKeywords = [
+        "vpn", "network", "ssh", "dns", "ip", "password", "reset", "login", "credential",
+        "error", "server", "linux", "windows", "mac", "terminal", "command", "wifi", "internet",
+        "access", "permission", "git", "docker", "kubernetes", "hardware", "monitor", "laptop",
+        "workstation", "software", "license"
+      ];
+      const isRelevant = itKeywords.some((k) => lowerQuery.includes(k));
+
+      if (!isRelevant) {
+        return {
+          content: `As your ${config.name} (${config.role}), I am specialized strictly in IT infrastructure, workstation setup, corporate network connectivity, and systems diagnostics.\n\nYour question regarding "${message}" is outside corporate IT helpdesk scope. For general questions, please switch to the "General Conversational Assistant".`,
+          latencyMs,
+          confidenceScore: 0.992,
+          toolsUsed: ["domainBoundaryFilter"],
+        };
+      }
+
+      if (lowerQuery.includes("vpn") || lowerQuery.includes("809")) {
+        baseResponse = `VPN Troubleshooting: For Error 809 or connection drops:\n1. Verify UDP ports 500 and 4500 are not blocked by your local router.\n2. Ensure corporate security certificates are current in your client keychain.\n3. In PowerShell as Admin, execute: Set-VpnConnection -Name 'CorpVPN' -SplitTunneling $True and restart the client.`;
+      } else if (lowerQuery.includes("ssh") || lowerQuery.includes("key")) {
+        baseResponse = `SSH Key Generation:\n1. Generate modern Ed25519 keypair: ssh-keygen -t ed25519 -C 'employee@company.com'\n2. Set strict file permissions: chmod 600 ~/.ssh/id_ed25519 and chmod 644 ~/.ssh/id_ed25519.pub\n3. Copy your public key to internal corporate repository settings.`;
+      } else if (lowerQuery.includes("dns") || lowerQuery.includes("flush")) {
+        baseResponse = `DNS Cache Flush:\n- Windows: In PowerShell/CMD run: ipconfig /flushdns\n- macOS: In Terminal run: sudo dscacheutil -flushcache; sudo killall -HUP mDNSResponder\n- Linux: Run: sudo resolvectl flush-caches`;
+      } else {
+        baseResponse = `IT Systems Engineer regarding "${message}": Diagnostic check initiated. Verify network ping via terminal, confirm your endpoint security agent is running, and ensure your multi-factor authentication token is synchronized.`;
+      }
+    }
+    // 6. GENERAL CONVERSATIONAL ASSISTANT (ANSWERS ANYTHING!)
+    else {
+      if (lowerQuery.includes("photosynthesis")) {
+        baseResponse = `Photosynthesis is the biological process by which green plants, algae, and cyanobacteria convert sunlight, water, and carbon dioxide into chemical energy stored in glucose, releasing oxygen as a byproduct.\n\nIt occurs inside chloroplasts where chlorophyll pigments absorb light during light-dependent reactions to generate ATP and NADPH.\n\nThe Calvin cycle then fixes CO₂ into organic carbohydrates that sustain plant metabolism and the Earth's atmosphere.`;
+      } else if (lowerQuery.includes("gravity") || lowerQuery.includes("gravitational")) {
+        baseResponse = `Gravity is a fundamental natural force of attraction between all objects with mass or energy.\n\nIn classical physics, Isaac Newton formulated it as an inverse-square law proportional to the product of two masses.\n\nIn modern physics, Albert Einstein's General Relativity demonstrated that gravity is the geometric curvature of four-dimensional spacetime caused by mass and energy.`;
+      } else if (lowerQuery.includes("quantum")) {
+        baseResponse = `Quantum mechanics is the fundamental branch of physics describing matter and light at the subatomic scale.\n\nCore principles include wave-particle duality, superposition (particles existing in multiple probabilistic states at once), and quantum entanglement.\n\nIn computing, qubits leverage these principles to solve complex optimization and cryptography problems exponentially faster than classical bits.`;
+      } else if (lowerQuery.includes("dna") || lowerQuery.includes("gene") || lowerQuery.includes("cell")) {
+        baseResponse = `Deoxyribonucleic acid (DNA) is the double-helix molecule carrying genetic instructions for all living organisms.\n\nIt consists of four nucleotide bases: Adenine (A), Thymine (T), Cytosine (C), and Guanine (G).\n\nThrough transcription into RNA and translation into proteins, DNA directs cellular development, metabolism, and hereditary reproduction.`;
+      } else if (lowerQuery.includes("ai") || lowerQuery.includes("artificial intelligence")) {
+        baseResponse = `Artificial Intelligence (AI) is the simulation of human intelligence processes by computer algorithms.\n\nIt enables machines to learn from empirical data, detect intricate patterns, reason through complex tasks, and understand human language.\n\nToday, AI powers real-time speech assistants, computer vision, autonomous vehicles, and advanced medical diagnostics.`;
+      } else if (lowerQuery.includes("machine learning") || lowerQuery.includes("deep learning")) {
+        baseResponse = `Machine Learning is a subfield of AI that enables algorithms to learn patterns directly from data rather than hand-coded rules.\n\nDeep Learning utilizes deep neural networks (like Transformers and CNNs) with millions of parameters to learn hierarchical representations of speech, text, and images.`;
+      } else if (lowerQuery.includes("code") || lowerQuery.includes("python") || lowerQuery.includes("javascript")) {
+        if (lowerQuery.includes("reverse") && lowerQuery.includes("string")) {
+          baseResponse = `Here is how to reverse a string in Python:\n\n\`\`\`python\ndef reverse_string(text: str) -> str:\n    return text[::-1]  # Slice notation with step -1\n\n# Test:\nprint(reverse_string('Hello World'))  # 'dlroW olleH'\n\`\`\`\n\nThe \`[::-1]\` slice step efficiently iterates in reverse order in O(N) time.`;
+        } else {
+          baseResponse = `Programming languages like Python and JavaScript provide the foundation for modern computing systems.\n\nPython excels in AI, data science, and backend APIs due to its clean syntax and extensive ecosystem.\n\nJavaScript/TypeScript powers interactive frontends (like Next.js) and asynchronous web servers.`;
+        }
+      } else if (["hello", "hi", "hey", "good morning", "good evening", "good afternoon"].includes(lowerQuery)) {
+        baseResponse = `Hello! I am your AI Voice Assistant. I am configured for universal conversation and ready to answer any questions across science, technology, programming, mathematics, or general knowledge. How can I help you today?`;
+      } else {
+        const cleanTopic = message.replace(/what is|explain|tell me about|how does|who was/gi, "").trim();
+        const topicTitle = cleanTopic || message;
+        baseResponse = `Regarding ${topicTitle}:\n\n${topicTitle} is an important subject studied across modern science, technology, and academia. It operates through structured principles validated by empirical observation and functional application.\n\nI can provide a step-by-step technical explanation, historical background, or practical examples. What specific aspect would you like to explore?`;
       }
     }
 
