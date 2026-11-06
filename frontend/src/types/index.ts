@@ -69,6 +69,8 @@ export interface ChatMessage {
   confidenceScore?: number;
   toolsUsed?: string[];
   domain?: DomainType;
+  modelUsed?: string;
+  isLiveAi?: boolean;
 }
 
 export interface ConversationSession {

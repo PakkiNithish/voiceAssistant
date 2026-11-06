@@ -110,6 +110,24 @@ export function ChatMessageItem({
               {Math.round(message.confidenceScore * 100)}% conf
             </span>
           )}
+          {message.modelUsed && (
+            <span
+              className={cn(
+                "inline-flex items-center gap-1 text-[10px] font-mono px-1.5 py-0.2 rounded-sm border",
+                message.isLiveAi
+                  ? "bg-emerald-50 text-emerald-700 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800 font-semibold"
+                  : "bg-slate-50 text-slate-600 border-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700"
+              )}
+            >
+              <span
+                className={cn(
+                  "h-1.5 w-1.5 rounded-full",
+                  message.isLiveAi ? "bg-emerald-500 animate-pulse" : "bg-slate-400"
+                )}
+              />
+              {message.modelUsed}
+            </span>
+          )}
         </div>
 
         {/* Message Bubble */}

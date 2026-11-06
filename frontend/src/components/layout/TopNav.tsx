@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Sun,
@@ -30,6 +31,7 @@ export function TopNav({ onToggleMobileMenu }: TopNavProps) {
     setCurrentLanguage,
     activeDomain,
     setActiveDomain,
+    settings,
   } = useAgentStore();
 
   const [isLangOpen, setIsLangOpen] = useState(false);
@@ -75,17 +77,28 @@ export function TopNav({ onToggleMobileMenu }: TopNavProps) {
 
       {/* Right Controls */}
       <div className="flex items-center gap-2 md:gap-3">
-        {/* Agent Status Indicator */}
-        <div className="hidden lg:flex items-center gap-2 px-2.5 py-1 rounded-full bg-slate-50 border border-slate-200/80 dark:bg-slate-900 dark:border-slate-800 text-xs">
-          <span className="relative flex h-2 w-2">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
-          </span>
-          <span className="text-[11px] font-medium text-slate-600 dark:text-slate-300">
-            Core Engine Online
-          </span>
-          <span className="text-[10px] text-slate-400 font-mono">295ms</span>
-        </div>
+        {/* Live AI Status Indicator */}
+        {settings.llm.apiKey ? (
+          <div className="hidden lg:flex items-center gap-2 px-2.5 py-1 rounded-full bg-emerald-50/80 border border-emerald-200 dark:bg-emerald-950/60 dark:border-emerald-800 text-xs">
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+            </span>
+            <span className="text-[11px] font-semibold text-emerald-800 dark:text-emerald-200 capitalize">
+              Live AI: {settings.llm.provider}
+            </span>
+          </div>
+        ) : (
+          <Link
+            href="/settings"
+            className="hidden lg:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-50 border border-amber-200 dark:bg-amber-950/60 dark:border-amber-900 text-xs text-amber-800 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/60 transition-colors"
+            title="Click to connect free Gemini / Groq key"
+          >
+            <span className="h-2 w-2 rounded-full bg-amber-500" />
+            <span className="text-[11px] font-medium">Offline AI Mode</span>
+            <span className="text-[10px] underline font-semibold">Connect Key</span>
+          </Link>
+        )}
 
         {/* Domain Switcher Dropdown */}
         <div className="relative">

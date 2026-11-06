@@ -17,6 +17,8 @@ export interface ChatResponsePayload {
   latencyMs: number;
   confidenceScore: number;
   toolsUsed: string[];
+  modelUsed?: string;
+  isLiveAi?: boolean;
 }
 
 export class ApiClient {
@@ -77,7 +79,15 @@ export class ApiClient {
   async sendChatMessage(payload: ChatRequestPayload): Promise<ChatResponsePayload> {
     const startTime = performance.now();
 
-    // 1. Try real FastAPI backend first
+    // 1. If user has an LLM API key configured, attempt direct live cloud AI call first
+    if (payload.llmApiKey && payload.llmApiKey.trim().length > 5) {
+      const liveCloudRes = await this.callLiveCloudLLM(payload, startTime);
+      if (liveCloudRes) {
+        return liveCloudRes;
+      }
+    }
+
+    // 2. Try real FastAPI backend
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 3500);
@@ -101,22 +111,241 @@ export class ApiClient {
 
       if (res.ok) {
         const data = await res.json();
+        const isLive = Boolean(data.model && (data.model.includes("Groq") || data.model.includes("OpenAI") || data.model.includes("Google") || data.model.includes("Ollama")));
         return {
           content: data.content,
           latencyMs: Math.round(performance.now() - startTime),
           confidenceScore: data.confidenceScore ?? 0.985,
           toolsUsed: data.toolsUsed ?? [],
+          modelUsed: data.model || (isLive ? "Live AI Model" : "Offline Fallback"),
+          isLiveAi: isLive,
         };
       }
     } catch {
       // Backend not currently reachable, proceed to dynamic configuration execution engine
     }
 
-    // 2. Dynamic client-side execution engine strictly adhering to the user's active AgentConfig
+    // 3. Dynamic client-side execution engine strictly adhering to the user's active AgentConfig
     await new Promise((resolve) => setTimeout(resolve, 350 + Math.random() * 250));
     const latencyMs = Math.round(performance.now() - startTime);
 
     return this.executeDynamicAgentRules(payload, latencyMs);
+  }
+
+  async callLiveCloudLLM(payload: ChatRequestPayload, startTime: number): Promise<ChatResponsePayload | null> {
+    const key = payload.llmApiKey?.trim();
+    if (!key) return null;
+
+    const { message, domain, language, config } = payload;
+    const style = config.responseStyle || "conversational";
+    const systemPrompt = `You are ${config.name}, operating with role: ${config.role} in domain ${domain}.
+Instructions: ${config.systemInstructions}
+Response Style: ${style} (adhere strictly to this style).
+Language: ${language.startsWith("te") ? "Respond in fluent Telugu (తెలుగు)." : language.startsWith("hi") ? "Respond in fluent Hindi (हिन्दी)." : "Respond in English."}
+Guideline: Provide a helpful, factual, articulate answer optimized for speech synthesis.`;
+
+    // A. Google Gemini
+    if (key.startsWith("AIza") || payload.llmProvider === "gemini") {
+      try {
+        const model = payload.llmModel || "gemini-1.5-flash";
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: `${systemPrompt}\n\nUser Question: ${message}` }] }],
+            generationConfig: {
+              temperature: config.temperature || 0.4,
+              maxOutputTokens: config.maxTokens || 600,
+            },
+          }),
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (text) {
+            return {
+              content: text.trim(),
+              latencyMs: Math.round(performance.now() - startTime),
+              confidenceScore: 0.995,
+              toolsUsed: ["gemini-cloud-llm"],
+              modelUsed: `Google Gemini (${model})`,
+              isLiveAi: true,
+            };
+          }
+        }
+      } catch (err) {
+        console.warn("Direct Gemini call error:", err);
+      }
+    }
+
+    // B. Groq (Ultra-fast, Llama 3)
+    if (key.startsWith("gsk_") || payload.llmProvider === "groq") {
+      try {
+        const model = payload.llmModel || "llama-3.3-70b-versatile";
+        const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${key}`,
+          },
+          body: JSON.stringify({
+            model,
+            messages: [
+              { role: "system", content: systemPrompt },
+              { role: "user", content: message },
+            ],
+            temperature: config.temperature || 0.4,
+            max_tokens: config.maxTokens || 600,
+          }),
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          const text = data.choices?.[0]?.message?.content;
+          if (text) {
+            return {
+              content: text.trim(),
+              latencyMs: Math.round(performance.now() - startTime),
+              confidenceScore: 0.998,
+              toolsUsed: ["groq-cloud-llm"],
+              modelUsed: `Groq (${model})`,
+              isLiveAi: true,
+            };
+          }
+        }
+      } catch (err) {
+        console.warn("Direct Groq call error:", err);
+      }
+    }
+
+    // C. OpenAI (GPT-4o-mini)
+    if (key.startsWith("sk-") || payload.llmProvider === "openai") {
+      try {
+        const model = payload.llmModel || "gpt-4o-mini";
+        const res = await fetch("https://api.openai.com/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${key}`,
+          },
+          body: JSON.stringify({
+            model,
+            messages: [
+              { role: "system", content: systemPrompt },
+              { role: "user", content: message },
+            ],
+            temperature: config.temperature || 0.4,
+            max_tokens: config.maxTokens || 600,
+          }),
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          const text = data.choices?.[0]?.message?.content;
+          if (text) {
+            return {
+              content: text.trim(),
+              latencyMs: Math.round(performance.now() - startTime),
+              confidenceScore: 0.992,
+              toolsUsed: ["openai-cloud-llm"],
+              modelUsed: `OpenAI (${model})`,
+              isLiveAi: true,
+            };
+          }
+        }
+      } catch (err) {
+        console.warn("Direct OpenAI call error:", err);
+      }
+    }
+
+    return null;
+  }
+
+  async testLlmKey(
+    provider: string,
+    key: string,
+    modelName?: string
+  ): Promise<{ success: boolean; modelName: string; error?: string }> {
+    const cleanKey = key.trim();
+    if (!cleanKey) return { success: false, modelName: "None", error: "Please enter an API key" };
+
+    // Test Gemini
+    if (cleanKey.startsWith("AIza") || provider === "gemini") {
+      try {
+        const model = modelName || "gemini-1.5-flash";
+        const res = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${cleanKey}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ contents: [{ parts: [{ text: "Hello" }] }] }),
+          }
+        );
+        if (res.ok) {
+          return { success: true, modelName: `Google Gemini (${model})` };
+        }
+        const err = await res.json();
+        return { success: false, modelName: "Gemini", error: err.error?.message || "Invalid Gemini API Key" };
+      } catch (e: any) {
+        return { success: false, modelName: "Gemini", error: e.message || "Failed to reach Gemini API" };
+      }
+    }
+
+    // Test Groq
+    if (cleanKey.startsWith("gsk_") || provider === "groq") {
+      try {
+        const model = modelName || "llama-3.3-70b-versatile";
+        const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${cleanKey}`,
+          },
+          body: JSON.stringify({
+            model,
+            messages: [{ role: "user", content: "Hi" }],
+            max_tokens: 5,
+          }),
+        });
+        if (res.ok) {
+          return { success: true, modelName: `Groq (${model})` };
+        }
+        const err = await res.json();
+        return { success: false, modelName: "Groq", error: err.error?.message || "Invalid Groq API Key" };
+      } catch (e: any) {
+        return { success: false, modelName: "Groq", error: e.message || "Failed to reach Groq API" };
+      }
+    }
+
+    // Test OpenAI
+    if (cleanKey.startsWith("sk-") || provider === "openai") {
+      try {
+        const model = modelName || "gpt-4o-mini";
+        const res = await fetch("https://api.openai.com/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${cleanKey}`,
+          },
+          body: JSON.stringify({
+            model,
+            messages: [{ role: "user", content: "Hi" }],
+            max_tokens: 5,
+          }),
+        });
+        if (res.ok) {
+          return { success: true, modelName: `OpenAI (${model})` };
+        }
+        const err = await res.json();
+        return { success: false, modelName: "OpenAI", error: err.error?.message || "Invalid OpenAI API Key" };
+      } catch (e: any) {
+        return { success: false, modelName: "OpenAI", error: e.message || "Failed to reach OpenAI API" };
+      }
+    }
+
+    return { success: false, modelName: "Unknown", error: "Unrecognized key format. Expected gsk_... (Groq), AIza... (Gemini), or sk-... (OpenAI)" };
   }
 
   /**

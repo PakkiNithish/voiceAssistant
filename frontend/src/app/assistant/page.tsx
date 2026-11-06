@@ -8,6 +8,11 @@ import {
   Sparkles,
   Info,
   CornerDownLeft,
+  CheckCircle2,
+  Key,
+  ExternalLink,
+  Loader2,
+  Zap,
 } from "lucide-react";
 import { useAgentStore } from "@/hooks/useAgentStore";
 import { useAudioRecorder } from "@/hooks/useAudioRecorder";
@@ -22,6 +27,9 @@ import { StateIndicator } from "@/components/assistant/StateIndicator";
 import { ChatMessageItem } from "@/components/assistant/ChatMessageItem";
 import { LiveTranscriptBox } from "@/components/assistant/LiveTranscriptBox";
 import { Button } from "@/components/ui/Button";
+import { Modal } from "@/components/ui/Modal";
+import { Input } from "@/components/ui/Input";
+import { Badge } from "@/components/ui/Badge";
 
 export default function AssistantPage() {
   const {
@@ -32,11 +40,23 @@ export default function AssistantPage() {
     addMessage,
     clearCurrentMessages,
     settings,
+    updateSettings,
   } = useAgentStore();
 
   const [interactionState, setInteractionState] = useState<InteractionState>("ready");
   const [textInput, setTextInput] = useState("");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // Live AI Connection Modal State
+  const [isConnectModalOpen, setIsConnectModalOpen] = useState(false);
+  const [modalProvider, setModalProvider] = useState<"gemini" | "groq" | "openai">(
+    settings.llm.provider === "gemini" || settings.llm.provider === "groq" || settings.llm.provider === "openai"
+      ? settings.llm.provider
+      : "gemini"
+  );
+  const [modalApiKey, setModalApiKey] = useState(settings.llm.apiKey || "");
+  const [isTestingKey, setIsTestingKey] = useState(false);
+  const [keyTestResult, setKeyTestResult] = useState<{ success?: boolean; message?: string } | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -131,6 +151,8 @@ export default function AssistantPage() {
         latencyMs: response.latencyMs,
         confidenceScore: response.confidenceScore,
         toolsUsed: response.toolsUsed,
+        modelUsed: response.modelUsed,
+        isLiveAi: response.isLiveAi,
       });
 
       setInteractionState("completed");
@@ -171,6 +193,39 @@ export default function AssistantPage() {
     executeAgentInference(query, false);
   };
 
+  const handleTestAndSaveKey = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!modalApiKey.trim()) return;
+    setIsTestingKey(true);
+    setKeyTestResult(null);
+
+    const test = await apiClient.testLlmKey(
+      modalProvider,
+      modalApiKey.trim(),
+      modalProvider === "gemini" ? "gemini-1.5-flash" : modalProvider === "groq" ? "llama-3.3-70b-versatile" : "gpt-4o-mini"
+    );
+
+    setIsTestingKey(false);
+    if (test.success) {
+      setKeyTestResult({ success: true, message: `Connected to ${test.modelName}! Real-time dynamic responses are now active.` });
+      const defaultModel = modalProvider === "gemini" ? "gemini-1.5-flash" : modalProvider === "groq" ? "llama-3.3-70b-versatile" : "gpt-4o-mini";
+      updateSettings({
+        llm: {
+          ...settings.llm,
+          provider: modalProvider,
+          apiKey: modalApiKey.trim(),
+          modelName: defaultModel,
+        },
+      });
+      setTimeout(() => {
+        setIsConnectModalOpen(false);
+        setKeyTestResult(null);
+      }, 1400);
+    } else {
+      setKeyTestResult({ success: false, message: test.error || "Failed to connect. Please verify your API key." });
+    }
+  };
+
   const domainInfo = DOMAINS[activeDomain] || DOMAINS.academic;
 
   return (
@@ -193,6 +248,30 @@ export default function AssistantPage() {
         </div>
 
         <div className="flex items-center gap-2">
+          {settings.llm.apiKey ? (
+            <button
+              onClick={() => {
+                setModalApiKey(settings.llm.apiKey || "");
+                setIsConnectModalOpen(true);
+              }}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800 text-xs font-semibold hover:bg-emerald-100 transition-colors cursor-pointer"
+            >
+              <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+              <span>AI Connected</span>
+            </button>
+          ) : (
+            <button
+              onClick={() => {
+                setModalApiKey(settings.llm.apiKey || "");
+                setIsConnectModalOpen(true);
+              }}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-100 text-amber-800 border border-amber-300 dark:bg-amber-950/80 dark:text-amber-200 dark:border-amber-800 text-xs font-semibold hover:bg-amber-200 transition-colors cursor-pointer animate-pulse"
+            >
+              <Zap className="h-3 w-3 text-amber-600 dark:text-amber-400" />
+              <span>Connect AI Model</span>
+            </button>
+          )}
+
           <Button
             variant="ghost"
             size="sm"
@@ -205,6 +284,46 @@ export default function AssistantPage() {
           </Button>
         </div>
       </div>
+
+      {/* AI Connection Status Banner */}
+      {!settings.llm.apiKey ? (
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-6 py-2 bg-gradient-to-r from-amber-50 to-orange-50 border-b border-amber-200 dark:from-amber-950/40 dark:to-orange-950/30 dark:border-amber-900 text-xs">
+          <div className="flex items-center gap-2 text-amber-900 dark:text-amber-200">
+            <span className="flex h-2 w-2 rounded-full bg-amber-500 shrink-0" />
+            <span>
+              <strong>Generative AI Not Connected:</strong> Operating in offline template fallback. Connect a free Google Gemini or Groq key to enable dynamic responses for every question.
+            </span>
+          </div>
+          <button
+            onClick={() => {
+              setModalApiKey(settings.llm.apiKey || "");
+              setIsConnectModalOpen(true);
+            }}
+            className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-medium shadow-xs transition-colors cursor-pointer shrink-0 text-xs"
+          >
+            <Zap className="h-3.5 w-3.5" />
+            Connect Free AI (30s)
+          </button>
+        </div>
+      ) : (
+        <div className="flex items-center justify-between px-6 py-1.5 bg-emerald-50/60 border-b border-emerald-200/80 dark:bg-emerald-950/30 dark:border-emerald-900/60 text-[11px] text-emerald-800 dark:text-emerald-300">
+          <div className="flex items-center gap-2">
+            <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+            <span>
+              <strong>Live AI Active:</strong> Connected to {settings.llm.modelName || settings.llm.provider}. Responses are generated in real-time based on your exact input.
+            </span>
+          </div>
+          <button
+            onClick={() => {
+              setModalApiKey(settings.llm.apiKey || "");
+              setIsConnectModalOpen(true);
+            }}
+            className="text-[11px] font-medium text-emerald-700 hover:underline dark:text-emerald-400 cursor-pointer"
+          >
+            Manage Key
+          </button>
+        </div>
+      )}
 
       {/* Microphone Permission Warning if denied */}
       {permissionStatus === "denied" && (
@@ -338,6 +457,153 @@ export default function AssistantPage() {
           </div>
         </div>
       </div>
+
+      {/* Quick Connect AI Modal */}
+      <Modal
+        isOpen={isConnectModalOpen}
+        onClose={() => {
+          setIsConnectModalOpen(false);
+          setKeyTestResult(null);
+        }}
+        title="Connect Generative AI Model"
+        description="Enable live, real-time dynamic AI responses for any question using your free Google Gemini or Groq API key."
+        maxWidth="lg"
+      >
+        <form onSubmit={handleTestAndSaveKey} className="space-y-4">
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+              Select AI Model Provider
+            </label>
+            <div className="grid grid-cols-3 gap-2">
+              {[
+                { id: "gemini" as const, name: "Google Gemini", badge: "Free Tier", desc: "gemini-1.5-flash" },
+                { id: "groq" as const, name: "Groq", badge: "Fastest / Free", desc: "llama-3.3-70b" },
+                { id: "openai" as const, name: "OpenAI", badge: "GPT-4o", desc: "gpt-4o-mini" },
+              ].map((p) => (
+                <button
+                  type="button"
+                  key={p.id}
+                  onClick={() => setModalProvider(p.id)}
+                  className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                    modalProvider === p.id
+                      ? "border-blue-600 bg-blue-50/60 dark:bg-blue-950/40 dark:border-blue-500 ring-2 ring-blue-500/20"
+                      : "border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-900"
+                  }`}
+                >
+                  <div className="text-xs font-bold text-slate-900 dark:text-white flex items-center justify-between">
+                    <span>{p.name}</span>
+                    {modalProvider === p.id && <CheckCircle2 className="h-3 w-3 text-blue-600" />}
+                  </div>
+                  <div className="text-[10px] text-blue-600 dark:text-blue-400 font-medium mt-0.5">{p.badge}</div>
+                  <div className="text-[10px] text-slate-400 font-mono mt-0.5">{p.desc}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                <Key className="h-3.5 w-3.5 text-slate-400" />
+                Paste {modalProvider === "gemini" ? "Gemini" : modalProvider === "groq" ? "Groq" : "OpenAI"} API Key:
+              </label>
+              {modalProvider === "gemini" && (
+                <a
+                  href="https://aistudio.google.com/app/apikey"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center gap-1"
+                >
+                  Get free Gemini key <ExternalLink className="h-2.5 w-2.5" />
+                </a>
+              )}
+              {modalProvider === "groq" && (
+                <a
+                  href="https://console.groq.com/keys"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center gap-1"
+                >
+                  Get free Groq key <ExternalLink className="h-2.5 w-2.5" />
+                </a>
+              )}
+              {modalProvider === "openai" && (
+                <a
+                  href="https://platform.openai.com/api-keys"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center gap-1"
+                >
+                  Get OpenAI key <ExternalLink className="h-2.5 w-2.5" />
+                </a>
+              )}
+            </div>
+            <Input
+              type="password"
+              value={modalApiKey}
+              onChange={(e) => setModalApiKey(e.target.value)}
+              placeholder={
+                modalProvider === "gemini"
+                  ? "AIzaSy..."
+                  : modalProvider === "groq"
+                  ? "gsk_..."
+                  : "sk-..."
+              }
+              className="font-mono text-xs"
+              required
+            />
+          </div>
+
+          {keyTestResult && (
+            <div
+              className={`p-3 rounded-xl text-xs flex items-start gap-2 border ${
+                keyTestResult.success
+                  ? "bg-emerald-50 text-emerald-800 border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-200 dark:border-emerald-900"
+                  : "bg-rose-50 text-rose-800 border-rose-200 dark:bg-rose-950/60 dark:text-rose-200 dark:border-rose-900"
+              }`}
+            >
+              {keyTestResult.success ? (
+                <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0 mt-0.5" />
+              ) : (
+                <AlertCircle className="h-4 w-4 text-rose-600 shrink-0 mt-0.5" />
+              )}
+              <span>{keyTestResult.message}</span>
+            </div>
+          )}
+
+          <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setIsConnectModalOpen(false);
+                setKeyTestResult(null);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              size="sm"
+              disabled={!modalApiKey.trim() || isTestingKey}
+              className="gap-1.5"
+            >
+              {isTestingKey ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Verifying Key...
+                </>
+              ) : (
+                <>
+                  <Zap className="h-3.5 w-3.5" />
+                  Test & Connect Model
+                </>
+              )}
+            </Button>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 }
