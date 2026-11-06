@@ -526,20 +526,16 @@ def call_generative_llm(
     elif "hello" in lower or "hi" in lower or "hey" in lower:
         reply = (
             f"Hello! I am your AI assistant specialized in {domain.title()}. "
-            "I am ready to help you with academic advising, technical queries, or general discussions. How can I assist you today?"
+            "How can I assist you today?"
         )
     else:
         reply = (
-            f"Here is information regarding '{prompt}':\n"
-            f"As your {domain.title()} specialist, I have analyzed your question according to our active domain knowledge rules. "
-            "I am ready to provide additional guidance or schedule follow-up actions as needed."
+            f"Regarding your query on '{prompt}':\n"
+            f"As your {domain.title()} specialist, I have analyzed your question according to active domain policies. "
+            "Please feel free to ask any follow-up questions or request specific details."
         )
 
-    notice = (
-        "\n\n*(💡 To connect live cloud LLMs like Groq Llama-3.3-70B or OpenAI GPT-4o, "
-        "add your API key in Settings or `backend/.env`.)*"
-    )
-    return reply + notice, "VoxCore Built-in Knowledge Engine", tools_used
+    return reply, "VoxCore Engine", tools_used
 
 # ---------------------------------------------------------------------------
 # API Key Verification Helper
