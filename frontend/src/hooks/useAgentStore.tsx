@@ -24,6 +24,16 @@ interface ToastNotification {
   type: "success" | "error" | "info";
 }
 
+export interface ConnectedModelInfo {
+  isConnected: boolean;
+  provider: "ollama" | "groq" | "gemini" | "openai" | "fastapi" | "offline";
+  modelName: string;
+  displayName: string;
+  installedOllamaModels: string[];
+  ollamaRunning: boolean;
+  fastApiRunning: boolean;
+}
+
 interface AgentStoreContextType {
   config: AgentConfig;
   updateConfig: (updates: Partial<AgentConfig>) => void;
@@ -44,6 +54,9 @@ interface AgentStoreContextType {
   incrementApiKeyUsage: (keyId?: string) => void;
   settings: AppSettings;
   updateSettings: (updates: Partial<AppSettings>) => void;
+  connectedModel: ConnectedModelInfo;
+  refreshModelStatus: () => Promise<void>;
+  switchActiveModel: (provider: string, modelName: string, apiKey?: string) => void;
   toasts: ToastNotification[];
   showToast: (title: string, description?: string, type?: "success" | "error" | "info") => void;
   removeToast: (id: string) => void;
@@ -105,6 +118,127 @@ export function AgentStoreProvider({ children }: { children: React.ReactNode }) 
   const [apiKeys, setApiKeys] = useState<ApiKeyRecord[]>(INITIAL_API_KEYS);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [toasts, setToasts] = useState<ToastNotification[]>([]);
+  const [connectedModel, setConnectedModel] = useState<ConnectedModelInfo>({
+    isConnected: false,
+    provider: "offline",
+    modelName: "None",
+    displayName: "Checking Models...",
+    installedOllamaModels: [],
+    ollamaRunning: false,
+    fastApiRunning: false,
+  });
+
+  const refreshModelStatus = async () => {
+    try {
+      const status = await apiClient.checkModelStatus();
+
+      let currentSettings = settings;
+      try {
+        const stored = localStorage.getItem("voxcore_app_settings");
+        if (stored) currentSettings = JSON.parse(stored);
+      } catch {}
+
+      // If user has a cloud API key configured
+      if (
+        currentSettings.llm.apiKey &&
+        (currentSettings.llm.provider === "groq" ||
+          currentSettings.llm.provider === "gemini" ||
+          currentSettings.llm.provider === "openai")
+      ) {
+        setConnectedModel({
+          isConnected: true,
+          provider: currentSettings.llm.provider,
+          modelName: currentSettings.llm.modelName,
+          displayName: `${currentSettings.llm.provider.toUpperCase()} (${currentSettings.llm.modelName})`,
+          installedOllamaModels: status.installedOllamaModels,
+          ollamaRunning: status.ollamaRunning,
+          fastApiRunning: status.fastApiRunning,
+        });
+        return;
+      }
+
+      // If Ollama is running locally
+      if (status.ollamaRunning && status.installedOllamaModels.length > 0) {
+        const chosenModel =
+          currentSettings.llm.provider === "ollama" &&
+          currentSettings.llm.modelName &&
+          status.installedOllamaModels.includes(currentSettings.llm.modelName)
+            ? currentSettings.llm.modelName
+            : (status.installedOllamaModels.includes("llama3.2:latest")
+                ? "llama3.2:latest"
+                : status.installedOllamaModels[0]);
+
+        setConnectedModel({
+          isConnected: true,
+          provider: "ollama",
+          modelName: chosenModel,
+          displayName: `Ollama (${chosenModel})`,
+          installedOllamaModels: status.installedOllamaModels,
+          ollamaRunning: true,
+          fastApiRunning: status.fastApiRunning,
+        });
+
+        // Set provider to ollama in settings
+        if (!currentSettings.llm.apiKey && currentSettings.llm.provider !== "ollama") {
+          const autoUpdated: AppSettings = {
+            ...currentSettings,
+            llm: {
+              ...currentSettings.llm,
+              provider: "ollama",
+              modelName: chosenModel,
+            },
+          };
+          setSettings(autoUpdated);
+          try {
+            localStorage.setItem("voxcore_app_settings", JSON.stringify(autoUpdated));
+          } catch {}
+        }
+        return;
+      }
+
+      // Neither is available
+      setConnectedModel({
+        isConnected: false,
+        provider: "offline",
+        modelName: "None",
+        displayName: "No Model Connected (Offline)",
+        installedOllamaModels: [],
+        ollamaRunning: false,
+        fastApiRunning: status.fastApiRunning,
+      });
+    } catch {
+      setConnectedModel({
+        isConnected: false,
+        provider: "offline",
+        modelName: "None",
+        displayName: "Offline Mode",
+        installedOllamaModels: [],
+        ollamaRunning: false,
+        fastApiRunning: false,
+      });
+    }
+  };
+
+  const switchActiveModel = (provider: string, modelName: string, apiKey?: string) => {
+    const updated: AppSettings = {
+      ...settings,
+      llm: {
+        ...settings.llm,
+        provider: provider as any,
+        modelName,
+        apiKey: apiKey !== undefined ? apiKey : (provider === "ollama" ? "" : settings.llm.apiKey),
+      },
+    };
+    updateSettings(updated);
+    setConnectedModel((prev) => ({
+      ...prev,
+      isConnected: provider !== "offline",
+      provider: provider as any,
+      modelName,
+      displayName: provider === "ollama" ? `Ollama (${modelName})` : `${provider.toUpperCase()} (${modelName})`,
+    }));
+    showToast("Model Switched", `Connected to ${provider.toUpperCase()}: ${modelName}`);
+  };
 
   // Load persisted config and settings on client mount
   useEffect(() => {
@@ -136,6 +270,8 @@ export function AgentStoreProvider({ children }: { children: React.ReactNode }) 
     } catch (e) {
       console.warn("Could not load from localStorage:", e);
     }
+    // Automatically detect Ollama and connected models
+    refreshModelStatus();
   }, []);
 
   const showToast = (
@@ -357,6 +493,9 @@ export function AgentStoreProvider({ children }: { children: React.ReactNode }) 
         incrementApiKeyUsage,
         settings,
         updateSettings,
+        connectedModel,
+        refreshModelStatus,
+        switchActiveModel,
         toasts,
         showToast,
         removeToast,

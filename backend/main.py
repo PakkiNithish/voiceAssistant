@@ -476,7 +476,31 @@ def call_generative_llm(
         try:
             import requests
             base_url = RUNTIME_LLM_CONFIG.get("ollama_base_url", "http://localhost:11434")
-            model_id = requested_model or RUNTIME_LLM_CONFIG.get("ollama_model", "llama3")
+
+            # Check available installed models from Ollama
+            installed_models: List[str] = []
+            try:
+                tags_res = requests.get(f"{base_url}/api/tags", timeout=2)
+                if tags_res.status_code == 200:
+                    installed_models = [
+                        m.get("name", "")
+                        for m in tags_res.json().get("models", [])
+                        if not m.get("name", "").lower().startswith("nomic-embed")
+                    ]
+            except Exception:
+                pass
+
+            model_id = requested_model or RUNTIME_LLM_CONFIG.get("ollama_model")
+            if not model_id or (installed_models and model_id not in installed_models):
+                if "llama3.2:latest" in installed_models:
+                    model_id = "llama3.2:latest"
+                elif "nemotron-3.5-bolt:e4b" in installed_models:
+                    model_id = "nemotron-3.5-bolt:e4b"
+                elif installed_models:
+                    model_id = installed_models[0]
+                else:
+                    model_id = "llama3.2:latest"
+
             res = requests.post(
                 f"{base_url}/api/chat",
                 json={
@@ -486,15 +510,19 @@ def call_generative_llm(
                         {"role": "user", "content": prompt},
                     ],
                     "stream": False,
+                    "options": {
+                        "temperature": temperature,
+                        "num_predict": max_tokens,
+                    },
                 },
-                timeout=5,
+                timeout=90,
             )
             if res.status_code == 200:
                 content = res.json()["message"]["content"].strip()
                 tools_used.append("ollama-local")
                 return content, f"Ollama ({model_id})", tools_used
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[VoxCore LLM] Ollama error: {e}")
 
     # 5. Smart Domain-Aware Knowledge Synthesizer
     # When general domain is active: answers ANY question across science, coding, math, history, and definitions.
@@ -863,22 +891,52 @@ def health_check():
     openai_set = bool(RUNTIME_LLM_CONFIG.get("openai_api_key") or os.getenv("OPENAI_API_KEY"))
     gemini_set = bool(RUNTIME_LLM_CONFIG.get("gemini_api_key") or os.getenv("GEMINI_API_KEY"))
 
+    # Probe Ollama on localhost
+    ollama_running = False
+    installed_ollama_models = []
+    try:
+        import requests
+        base_url = RUNTIME_LLM_CONFIG.get("ollama_base_url", "http://localhost:11434")
+        t_res = requests.get(f"{base_url}/api/tags", timeout=1.5)
+        if t_res.status_code == 200:
+            ollama_running = True
+            installed_ollama_models = [
+                m.get("name", "")
+                for m in t_res.json().get("models", [])
+                if not m.get("name", "").lower().startswith("nomic-embed")
+            ]
+    except Exception:
+        pass
+
     active_provider = "none"
+    model_name = "built-in"
     if groq_set:
-        active_provider = "groq (Llama-3.3-70B)"
+        active_provider = "groq"
+        model_name = "llama-3.3-70b-versatile"
     elif openai_set:
-        active_provider = "openai (GPT-4o-mini)"
+        active_provider = "openai"
+        model_name = "gpt-4o-mini"
     elif gemini_set:
-        active_provider = "gemini (Gemini-1.5-Flash)"
+        active_provider = "gemini"
+        model_name = "gemini-1.5-flash"
+    elif ollama_running and installed_ollama_models:
+        active_provider = "ollama"
+        model_name = "llama3.2:latest" if "llama3.2:latest" in installed_ollama_models else installed_ollama_models[0]
     else:
-        active_provider = "built-in / ollama"
+        active_provider = "built-in / offline"
+        model_name = "VoxCore Rule Engine"
+
+    is_llm_connected = groq_set or openai_set or gemini_set or (ollama_running and len(installed_ollama_models) > 0)
 
     return {
         "status": "online",
         "engine": "VoxCore Core NLP & Speech Engine",
         "version": "2.4.0",
-        "llmConnected": groq_set or openai_set or gemini_set,
+        "llmConnected": is_llm_connected,
         "activeProvider": active_provider,
+        "activeModel": model_name,
+        "ollamaRunning": ollama_running,
+        "installedOllamaModels": installed_ollama_models,
         "activeDomains": list(DEFAULT_DOMAINS.keys()),
         "time": time.time(),
     }
@@ -889,14 +947,81 @@ def get_llm_status():
     openai_set = bool(RUNTIME_LLM_CONFIG.get("openai_api_key") or os.getenv("OPENAI_API_KEY"))
     gemini_set = bool(RUNTIME_LLM_CONFIG.get("gemini_api_key") or os.getenv("GEMINI_API_KEY"))
 
+    ollama_running = False
+    installed_ollama_models = []
+    try:
+        import requests
+        base_url = RUNTIME_LLM_CONFIG.get("ollama_base_url", "http://localhost:11434")
+        t_res = requests.get(f"{base_url}/api/tags", timeout=1.5)
+        if t_res.status_code == 200:
+            ollama_running = True
+            installed_ollama_models = [
+                m.get("name", "")
+                for m in t_res.json().get("models", [])
+                if not m.get("name", "").lower().startswith("nomic-embed")
+            ]
+    except Exception:
+        pass
+
+    active_provider = RUNTIME_LLM_CONFIG.get("provider", "auto")
+    if active_provider == "auto":
+        if groq_set:
+            active_provider = "groq"
+        elif openai_set:
+            active_provider = "openai"
+        elif gemini_set:
+            active_provider = "gemini"
+        elif ollama_running:
+            active_provider = "ollama"
+
+    active_model = "none"
+    if active_provider == "ollama":
+        active_model = (
+            "llama3.2:latest"
+            if "llama3.2:latest" in installed_ollama_models
+            else (installed_ollama_models[0] if installed_ollama_models else "llama3")
+        )
+    elif active_provider == "groq":
+        active_model = "llama-3.3-70b-versatile"
+    elif active_provider == "openai":
+        active_model = "gpt-4o-mini"
+    elif active_provider == "gemini":
+        active_model = "gemini-1.5-flash"
+
+    is_model_connected = groq_set or openai_set or gemini_set or (ollama_running and len(installed_ollama_models) > 0)
+
     return {
-        "provider": RUNTIME_LLM_CONFIG.get("provider", "auto"),
+        "provider": active_provider,
+        "activeModel": active_model,
+        "displayName": f"{active_provider.title()}: {active_model}" if is_model_connected else "Offline / Not Connected",
+        "isModelConnected": is_model_connected,
         "hasGroqKey": groq_set,
         "hasOpenaiKey": openai_set,
         "hasGeminiKey": gemini_set,
-        "isModelConnected": groq_set or openai_set or gemini_set,
+        "ollamaRunning": ollama_running,
+        "installedOllamaModels": installed_ollama_models,
         "ollamaUrl": RUNTIME_LLM_CONFIG.get("ollama_base_url"),
-        "recommendedFreeProvider": "Groq (console.groq.com/keys)",
+    }
+
+@app.get("/api/v1/llm/models")
+def list_available_models():
+    """Lists all available models across local Ollama and configured cloud providers."""
+    status = get_llm_status()
+    return {
+        "connected": status["isModelConnected"],
+        "activeProvider": status["provider"],
+        "activeModel": status["activeModel"],
+        "displayName": status["displayName"],
+        "ollama": {
+            "running": status["ollamaRunning"],
+            "installedModels": status["installedOllamaModels"],
+            "url": status["ollamaUrl"],
+        },
+        "cloud": {
+            "groq": status["hasGroqKey"],
+            "openai": status["hasOpenaiKey"],
+            "gemini": status["hasGeminiKey"],
+        },
     }
 
 @app.post("/api/v1/llm/config")

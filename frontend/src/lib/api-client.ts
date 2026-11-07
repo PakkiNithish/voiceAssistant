@@ -38,6 +38,63 @@ export class ApiClient {
     this.apiKey = key;
   }
 
+  async checkModelStatus(): Promise<{
+    connected: boolean;
+    provider: string;
+    model: string;
+    displayName: string;
+    ollamaRunning: boolean;
+    installedOllamaModels: string[];
+    fastApiRunning: boolean;
+  }> {
+    try {
+      const res = await fetch("/api/llm/status");
+      if (res.ok) {
+        const data = await res.json();
+        const ollamaRunning = Boolean(data.ollama?.running);
+        const models: string[] = data.ollama?.installedModels || [];
+        const fastApiRunning = Boolean(data.fastApi?.running);
+
+        let connected = false;
+        let provider = "none";
+        let model = "none";
+        let displayName = "Offline / No Model Connected";
+
+        if (ollamaRunning && models.length > 0) {
+          connected = true;
+          provider = "ollama";
+          model = data.ollama.recommendedModel || models[0];
+          displayName = `Ollama (${model})`;
+        } else if (fastApiRunning && data.fastApi?.activeProvider && data.fastApi.activeProvider !== "none") {
+          connected = true;
+          provider = "fastapi";
+          model = data.fastApi.activeProvider;
+          displayName = `FastAPI: ${model}`;
+        }
+
+        return {
+          connected,
+          provider,
+          model,
+          displayName,
+          ollamaRunning,
+          installedOllamaModels: models,
+          fastApiRunning,
+        };
+      }
+    } catch {}
+
+    return {
+      connected: false,
+      provider: "none",
+      model: "none",
+      displayName: "Offline / No Model Connected",
+      ollamaRunning: false,
+      installedOllamaModels: [],
+      fastApiRunning: false,
+    };
+  }
+
   async checkHealth(): Promise<{ status: "connected" | "offline"; message: string }> {
     try {
       const controller = new AbortController();
@@ -78,6 +135,40 @@ export class ApiClient {
 
   async sendChatMessage(payload: ChatRequestPayload): Promise<ChatResponsePayload> {
     const startTime = performance.now();
+
+    // 0. If provider is Ollama OR no cloud key is set: attempt Next.js Ollama route (/api/llm/chat)
+    if (payload.llmProvider === "ollama" || (!payload.llmApiKey && payload.llmProvider !== "none")) {
+      try {
+        const ollamaRes = await fetch("/api/llm/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            message: payload.message,
+            domain: payload.domain,
+            language: payload.language,
+            config: payload.config,
+            provider: payload.llmProvider || "ollama",
+            model: payload.llmModel,
+            apiKey: payload.llmApiKey,
+          }),
+        });
+        if (ollamaRes.ok) {
+          const oData = await ollamaRes.json();
+          if (oData.content) {
+            return {
+              content: oData.content,
+              latencyMs: oData.latencyMs ?? Math.round(performance.now() - startTime),
+              confidenceScore: oData.confidenceScore ?? 0.995,
+              toolsUsed: oData.toolsUsed ?? ["ollama-local-llm"],
+              modelUsed: oData.modelUsed || "Ollama",
+              isLiveAi: true,
+            };
+          }
+        }
+      } catch {
+        // Fall through to other providers or backend
+      }
+    }
 
     // 1. If user has an LLM API key configured, attempt direct live cloud AI call first
     if (payload.llmApiKey && payload.llmApiKey.trim().length > 5) {
@@ -267,8 +358,35 @@ Guideline: Provide a helpful, factual, articulate answer optimized for speech sy
     provider: string,
     key: string,
     modelName?: string
-  ): Promise<{ success: boolean; modelName: string; error?: string }> {
+  ): Promise<{ success: boolean; modelName: string; error?: string; installedModels?: string[] }> {
     const cleanKey = key.trim();
+
+    // Test Ollama (doesn't require a real API key)
+    if (provider === "ollama" || cleanKey.toLowerCase() === "ollama" || cleanKey.toLowerCase().includes("localhost")) {
+      try {
+        const res = await fetch("/api/llm/status");
+        if (res.ok) {
+          const data = await res.json();
+          if (data.ollama?.running) {
+            const models = data.ollama.installedModels || [];
+            const activeM = modelName || data.ollama.recommendedModel || (models.length > 0 ? models[0] : "llama3.2:latest");
+            return {
+              success: true,
+              modelName: `Ollama (${activeM})`,
+              installedModels: models,
+            };
+          }
+        }
+        return {
+          success: false,
+          modelName: "Ollama",
+          error: "Ollama service is not running on http://localhost:11434. Please ensure Ollama is started.",
+        };
+      } catch (e: any) {
+        return { success: false, modelName: "Ollama", error: e.message || "Failed to reach Ollama service" };
+      }
+    }
+
     if (!cleanKey) return { success: false, modelName: "None", error: "Please enter an API key" };
 
     // Test Gemini

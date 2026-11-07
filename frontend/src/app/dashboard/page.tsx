@@ -23,7 +23,7 @@ import { DOMAINS } from "@/lib/mock-data";
 import { formatDuration, formatRelativeTime } from "@/lib/utils";
 
 export default function DashboardPage() {
-  const { config, activeDomain, conversations, apiKeys } = useAgentStore();
+  const { config, activeDomain, conversations, apiKeys, connectedModel } = useAgentStore();
   const domainInfo = DOMAINS[activeDomain] || DOMAINS.academic;
 
   // Dynamic calculations from real state
@@ -41,11 +41,11 @@ export default function DashboardPage() {
   const statCards = [
     {
       title: "Active AI Agent Status",
-      value: "Online · v2.4",
+      value: connectedModel.isConnected ? connectedModel.displayName : "Online · v2.4",
       subtext: `${config.name} (${domainInfo.name})`,
       icon: Activity,
-      badge: "Healthy",
-      badgeVariant: "success" as const,
+      badge: connectedModel.isConnected ? "Live LLM" : "Offline",
+      badgeVariant: (connectedModel.isConnected ? "success" : "secondary") as any,
       color: "text-emerald-500",
       bgGradient: "from-emerald-500/10 to-transparent",
     },

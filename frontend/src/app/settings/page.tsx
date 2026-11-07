@@ -32,12 +32,34 @@ import { AppSettings } from "@/types";
 import { LANGUAGE_OPTIONS } from "@/lib/utils";
 
 export default function SettingsPage() {
-  const { settings, updateSettings } = useAgentStore();
+  const { settings, updateSettings, connectedModel, refreshModelStatus } = useAgentStore();
   const { theme, setTheme } = useTheme();
 
   const [formData, setFormData] = useState<AppSettings>(settings);
   const [pingStatus, setPingStatus] = useState<"idle" | "testing" | "success" | "offline">("idle");
   const [pingMessage, setPingMessage] = useState("");
+  const [modelTestStatus, setModelTestStatus] = useState<{ testing: boolean; result?: { success: boolean; message: string } }>({ testing: false });
+
+  const handleTestModel = async () => {
+    setModelTestStatus({ testing: true });
+    const p = formData.llm.provider;
+    const key = formData.llm.apiKey;
+    const model = formData.llm.modelName;
+
+    const res = await apiClient.testLlmKey(p, key || (p === "ollama" ? "ollama" : ""), model);
+    setModelTestStatus({
+      testing: false,
+      result: {
+        success: res.success,
+        message: res.success
+          ? `Successfully connected to ${res.modelName}!`
+          : (res.error || "Failed to connect to model"),
+      },
+    });
+    if (res.success) {
+      await refreshModelStatus();
+    }
+  };
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
@@ -294,15 +316,86 @@ export default function SettingsPage() {
                   Generative AI Model Connection (LLM Engine)
                 </CardTitle>
                 <CardDescription>
-                  Connect your voice assistant to live AI models (Groq Llama 3, OpenAI GPT-4o, Google Gemini, or Ollama)
+                  Connect your voice assistant to live AI models (Ollama Local, Groq Llama 3, OpenAI GPT-4o, or Google Gemini)
                 </CardDescription>
               </div>
-              <Badge variant={formData.llm.apiKey ? "success" : "secondary"} size="sm" className="font-mono">
-                {formData.llm.apiKey ? "Key Configured" : "Offline / Built-in"}
+              <Badge
+                variant={connectedModel.isConnected ? "success" : "secondary"}
+                size="sm"
+                className="font-mono text-xs"
+              >
+                {connectedModel.isConnected ? `🟢 ${connectedModel.displayName}` : "Offline Mode"}
               </Badge>
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
+            {/* Live Model Status Banner */}
+            <div
+              className={`p-3.5 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+                connectedModel.isConnected
+                  ? "bg-emerald-50/70 border-emerald-300 dark:bg-emerald-950/40 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200"
+                  : "bg-slate-50 border-slate-200 dark:bg-slate-900 dark:border-slate-800 text-slate-700 dark:text-slate-300"
+              }`}
+            >
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`h-2.5 w-2.5 rounded-full ${
+                      connectedModel.isConnected ? "bg-emerald-500 animate-pulse" : "bg-slate-400"
+                    }`}
+                  />
+                  <span className="text-xs font-bold">
+                    Active Engine: {connectedModel.displayName}
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                  {connectedModel.provider === "ollama"
+                    ? "Running locally on http://localhost:11434 with 0ms network latency and zero data leakage."
+                    : connectedModel.isConnected
+                    ? "Connected to cloud LLM provider. Generates real-time speech responses for every question."
+                    : "No generative model connected. Operating in offline template fallback."}
+                </p>
+              </div>
+
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleTestModel}
+                disabled={modelTestStatus.testing}
+                className="shrink-0 gap-1.5 text-xs rounded-xl"
+              >
+                {modelTestStatus.testing ? (
+                  <>
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    Testing...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="h-3.5 w-3.5 text-blue-500" />
+                    Test Model Connection
+                  </>
+                )}
+              </Button>
+            </div>
+
+            {modelTestStatus.result && (
+              <div
+                className={`p-3 rounded-xl text-xs flex items-start gap-2 border ${
+                  modelTestStatus.result.success
+                    ? "bg-emerald-50 text-emerald-800 border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-200 dark:border-emerald-900"
+                    : "bg-rose-50 text-rose-800 border-rose-200 dark:bg-rose-950/60 dark:text-rose-200 dark:border-rose-900"
+                }`}
+              >
+                {modelTestStatus.result.success ? (
+                  <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0 mt-0.5" />
+                ) : (
+                  <AlertCircle className="h-4 w-4 text-rose-600 shrink-0 mt-0.5" />
+                )}
+                <span>{modelTestStatus.result.message}</span>
+              </div>
+            )}
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {/* Provider Selection */}
               <div className="space-y-1.5">
@@ -316,7 +409,12 @@ export default function SettingsPage() {
                     let defaultModel = "llama-3.3-70b-versatile";
                     if (p === "openai") defaultModel = "gpt-4o-mini";
                     else if (p === "gemini") defaultModel = "gemini-1.5-flash";
-                    else if (p === "ollama") defaultModel = "llama3";
+                    else if (p === "ollama") {
+                      defaultModel =
+                        connectedModel.installedOllamaModels.length > 0
+                          ? connectedModel.installedOllamaModels[0]
+                          : "llama3.2:latest";
+                    }
                     setFormData({
                       ...formData,
                       llm: { ...formData.llm, provider: p, modelName: defaultModel },
@@ -324,11 +422,11 @@ export default function SettingsPage() {
                   }}
                   className="w-full h-10 px-3 rounded-xl border border-slate-200 bg-white text-xs text-slate-900 dark:border-slate-800 dark:bg-slate-900 dark:text-white"
                 >
+                  <option value="ollama">Ollama Local (Offline & Free - No Key Needed)</option>
+                  <option value="groq">Groq (Cloud - Free & 300 tps Fast)</option>
+                  <option value="openai">OpenAI (Cloud - GPT-4o / GPT-4o-mini)</option>
+                  <option value="gemini">Google Gemini (Cloud - Gemini 1.5 Flash)</option>
                   <option value="auto">Auto-Detect from API Key</option>
-                  <option value="groq">Groq (Recommended - Free & 300 tps Fast)</option>
-                  <option value="openai">OpenAI (GPT-4o / GPT-4o-mini)</option>
-                  <option value="gemini">Google Gemini (Gemini 1.5 Flash)</option>
-                  <option value="ollama">Ollama Local (Offline & Free)</option>
                 </select>
               </div>
 
@@ -337,50 +435,78 @@ export default function SettingsPage() {
                 <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
                   Model Identifier
                 </label>
-                <Input
-                  value={formData.llm.modelName}
-                  onChange={(e) =>
-                    setFormData({
-                      ...formData,
-                      llm: { ...formData.llm, modelName: e.target.value },
-                    })
-                  }
-                  placeholder="e.g. llama-3.3-70b-versatile or gpt-4o-mini"
-                />
+                {formData.llm.provider === "ollama" && connectedModel.installedOllamaModels.length > 0 ? (
+                  <select
+                    value={formData.llm.modelName}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        llm: { ...formData.llm, modelName: e.target.value },
+                      })
+                    }
+                    className="w-full h-10 px-3 rounded-xl border border-slate-200 bg-white text-xs font-mono text-slate-900 dark:border-slate-800 dark:bg-slate-900 dark:text-white"
+                  >
+                    {connectedModel.installedOllamaModels.map((m) => (
+                      <option key={m} value={m}>
+                        {m}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <Input
+                    value={formData.llm.modelName}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        llm: { ...formData.llm, modelName: e.target.value },
+                      })
+                    }
+                    placeholder="e.g. llama3.2:latest or llama-3.3-70b-versatile"
+                  />
+                )}
               </div>
             </div>
 
-            {/* API Key Input */}
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                  <Key className="h-3.5 w-3.5 text-slate-400" />
-                  Provider API Key
-                </label>
-                <a
-                  href="https://console.groq.com/keys"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center gap-1"
-                >
-                  Get free Groq key <ExternalLink className="h-2.5 w-2.5" />
-                </a>
+            {/* API Key Input (Hidden for Ollama) */}
+            {formData.llm.provider !== "ollama" ? (
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                    <Key className="h-3.5 w-3.5 text-slate-400" />
+                    Provider API Key
+                  </label>
+                  <a
+                    href="https://console.groq.com/keys"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center gap-1"
+                  >
+                    Get free Groq key <ExternalLink className="h-2.5 w-2.5" />
+                  </a>
+                </div>
+                <Input
+                  type="password"
+                  value={formData.llm.apiKey}
+                  onChange={(e) =>
+                    setFormData({
+                      ...formData,
+                      llm: { ...formData.llm, apiKey: e.target.value },
+                    })
+                  }
+                  placeholder="Paste your Groq (gsk_...), OpenAI (sk-...), or Gemini (AIza...) key"
+                />
+                <p className="text-[11px] text-slate-400">
+                  You can also paste this key directly into <code className="px-1 py-0.5 rounded bg-slate-100 dark:bg-slate-800 font-mono text-[10px]">backend/.env</code>.
+                </p>
               </div>
-              <Input
-                type="password"
-                value={formData.llm.apiKey}
-                onChange={(e) =>
-                  setFormData({
-                    ...formData,
-                    llm: { ...formData.llm, apiKey: e.target.value },
-                  })
-                }
-                placeholder="Paste your Groq (gsk_...), OpenAI (sk-...), or Gemini (AIza...) key"
-              />
-              <p className="text-[11px] text-slate-400">
-                You can also paste this key directly into <code className="px-1 py-0.5 rounded bg-slate-100 dark:bg-slate-800 font-mono text-[10px]">backend/.env</code>.
-              </p>
-            </div>
+            ) : (
+              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/40 border border-slate-200/80 dark:border-slate-800 text-[11px] text-slate-600 dark:text-slate-400 flex items-center justify-between">
+                <span>Ollama operates 100% locally on your machine. No API key or credit card is required.</span>
+                <span className="font-mono text-[10px] px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 font-semibold shrink-0">
+                  Localhost:11434
+                </span>
+              </div>
+            )}
           </CardContent>
         </Card>
 
